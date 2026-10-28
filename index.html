@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DailyTalk - Daily English Journal & Kakao Auth</title>
+    <!-- React & ReactDOM CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .dark body {
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        .light body {
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        /* Fluid Typography & Responsive Sizing for Mobile */
+        .card-title {
+            font-size: clamp(0.68rem, 2.5vw, 0.75rem);
+        }
+        .card-value {
+            font-size: clamp(1.1rem, 4.5vw, 1.5rem);
+        }
+        .cal-day-text {
+            font-size: clamp(0.7rem, 2.8vw, 0.875rem);
+        }
+        .cal-status-tag {
+            font-size: clamp(0.55rem, 2.2vw, 0.65rem);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.4);
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="light">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // 오늘 날짜 YYYY-MM-DD
+        const getTodayString = () => {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        };
+
+        // 추천 예시 일기
+        const SAMPLE_JOURNALS = [
+            {
+                title: "☕ 카페에서의 공부",
+                text: "Today I visited a quiet coffee shop near my home to practice English writing. I ordered a hot cafe latte and spent two hours reviewing new expressions. Working in a cozy environment helped me concentrate much better than usual."
+            },
+            {
+                title: "💼 회사 업무 및 회의",
+                text: "We had an important team sync meeting today. I tried to speak up in English during the presentation. Even though I felt a bit nervous at first, my teammates supported me, which gave me more confidence."
+            },
+            {
+                title: "🏋️ 오운완 & 운동",
+                text: "I went for an evening jog in the park. The weather was crisp and refreshing. Listening to an English podcast while running turned out to be a great way to combine exercise with learning!"
+            }
+        ];
+
+        function App() {
+            // 다크 모드
+            const [isDarkMode, setIsDarkMode] = useState(false);
+
+            // 입력 폼 상태
+            const [participantName, setParticipantName] = useState(() => localStorage.getItem('dt_user_name') || '김영어');
+            const [studyDate, setStudyDate] = useState(getTodayString());
+            const [todayLearning, setTodayLearning] = useState('');
+            const [todayJournal, setTodayJournal] = useState('');
+            const [todayReflection, setTodayReflection] = useState('');
+            const [editingId, setEditingId] = useState(null); // 수정 모드 시 해당 항목 ID
+
+            // 저장된 일기 데이터 목록 (localStorage 연동)
+            const [journals, setJournals] = useState(() => {
+                const saved = localStorage.getItem('dt_journal_list');
+                if (saved) {
+                    try { return JSON.parse(saved); } catch(e) {}
+                }
+                return [
+                    {
+                        id: 'sample-1',
+                        name: '김영어',
+                        date: getTodayString(),
+                        learning: 'whip up (음식을 뚝딱 차리다), stay on track',
+                        journal: `Today I visited a quiet coffee shop near my home to practice English writing. I ordered a hot cafe latte and spent two hours reviewing new expressions.\nWorking in a cozy environment helped me concentrate much better than usual. I feel great about making steady progress every single day!`,
+                        reflection: '꾸준히 하루 10분씩 일기 작성하는 습관을 들이자.',
+                        createdAt: Date.now()
+                    }
+                ];
+            });
+
+            // 독립적인 작성/인증 완료 날짜 히스토리 (일기가 삭제되어도 캘린더 및 통계에 잔존)
+            const [completedDates, setCompletedDates] = useState(() => {
+                const savedHistory = localStorage.getItem('dt_completed_dates');
+                if (savedHistory) {
+                    try { return JSON.parse(savedHistory); } catch(e) {}
+                }
+                return [getTodayString()];
+            });
+
+            // 알림 토스트 상태
+            const [toastMessage, setToastMessage] = useState(null);
+            const [copiedSuccess, setCopiedSuccess] = useState(false);
+
+            // 캘린더 현재 조회 연/월 상태
+            const [currentCalDate, setCurrentCalDate] = useState(new Date());
+
+            // 이름 변경 시 localStorage 저장
+            useEffect(() => {
+                localStorage.setItem('dt_user_name', participantName);
+            }, [participantName]);
+
+            // 일기 목록 변경 시 localStorage 저장
+            useEffect(() => {
+                localStorage.setItem('dt_journal_list', JSON.stringify(journals));
+            }, [journals]);
+
+            // 인증 완료 날짜 기록 변경 시 localStorage 저장
+            useEffect(() => {
+                localStorage.setItem('dt_completed_dates', JSON.stringify(completedDates));
+            }, [completedDates]);
+
+            // 토스트 출력 함수
+            const showToast = (msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(null), 3000);
+            };
+
+            // 일기 저장 또는 수정 처리
+            const handleSaveJournal = (e) => {
+                if (e) e.preventDefault();
+
+                if (!participantName.trim()) {
+                    showToast('⚠️ 참여자 이름을 입력해주세요.');
+                    return;
+                }
+                if (!todayJournal.trim()) {
+                    showToast('⚠️ 오늘의 영어 일기 내용(Today\'s Journal)을 작성해주세요.');
+                    return;
+                }
+
+                // 해당 학습 날짜를 completedDates 인증 히스토리에 추가 (중복 방지)
+                if (!completedDates.includes(studyDate)) {
+                    setCompletedDates(prev => [...prev, studyDate]);
+                }
+
+                if (editingId) {
+                    // 기존 일기 수정
+                    setJournals(prev => prev.map(item => {
+                        if (item.id === editingId) {
+                            return {
+                                ...item,
+                                name: participantName,
+                                date: studyDate,
+                                learning: todayLearning,
+                                journal: todayJournal,
+                                reflection: todayReflection,
+                                updatedAt: Date.now()
+                            };
+                        }
+                        return item;
+                    }));
+                    setEditingId(null);
+                    showToast('✅ 일기가 성공적으로 수정되었습니다!');
+                } else {
+                    // 새 일기 작성 및 저장
+                    const newEntry = {
+                        id: 'j-' + Date.now(),
+                        name: participantName,
+                        date: studyDate,
+                        learning: todayLearning,
+                        journal: todayJournal,
+                        reflection: todayReflection,
+                        createdAt: Date.now()
+                    };
+                    setJournals(prev => [newEntry, ...prev]);
+                    showToast('🎉 오늘의 일기가 저장되고 학습 인증이 완료되었습니다!');
+                }
+            };
+
+            // 선택한 일기 불러오기 (수정/조회)
+            const handleLoadJournal = (entry) => {
+                setEditingId(entry.id);
+                setParticipantName(entry.name || '');
+                setStudyDate(entry.date || getTodayString());
+                setTodayLearning(entry.learning || '');
+                setTodayJournal(entry.journal || '');
+                setTodayReflection(entry.reflection || '');
+                showToast(`📅 ${entry.date} 일기를 불러왔습니다.`);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            // 일기 삭제 (목록에서 삭제되며 해당 일기의 당일 인증 status도 취소됨)
+            const handleDeleteJournal = (id) => {
+                const target = journals.find(j => j.id === id);
+                if (window.confirm('일기를 삭제하시겠습니까? 해당 날짜의 일기가 없어지면 인증 완료 상태도 취소됩니다.')) {
+                    setJournals(prev => prev.filter(j => j.id !== id));
+                    
+                    // 삭제된 일기의 날짜에 다른 일기가 더 이상 없으면 completedDates에서도 제거
+                    if (target) {
+                        const remaining = journals.filter(j => j.id !== id && j.date === target.date);
+                        if (remaining.length === 0) {
+                            setCompletedDates(prev => prev.filter(d => d !== target.date));
+                        }
+                    }
+
+                    if (editingId === id) {
+                        handleResetForm();
+                    }
+                    showToast('🗑️ 일기가 삭제되었습니다.');
+                }
+            };
+
+            // 입력 폼 초기화 (새 일기 쓰기)
+            const handleResetForm = () => {
+                setEditingId(null);
+                setStudyDate(getTodayString());
+                setTodayLearning('');
+                setTodayJournal('');
+                setTodayReflection('');
+            };
+
+            // 카카오톡 인증 메시지 복사 기능
+            const handleCopyKakaoAuthMessage = () => {
+                // 선택한 studyDate 날짜에 실제 저장된 일기가 있는지 검증
+                const hasSavedJournalForDate = journals.some(j => j.date === studyDate);
+
+                if (!hasSavedJournalForDate) {
+                    showToast('⚠️ 선택한 날짜에 저장된 일기가 없습니다! 일기를 먼저 작성/저장해주세요.');
+                }
+
+                const isAuthedDate = hasSavedJournalForDate;
+
+                let formattedMessage = 
+`🌱 Make It Mine | Daily English Journal
+📅 Date: ${studyDate || getTodayString()}
+👤 Name: ${participantName || '학습자'}
+
+✅ 오늘의 인증: ${isAuthedDate ? '완료' : '미완료'}
+🔥 연속 달성: ${streak}일 연속
+🎯 이번 주 달성률: ${achievementRate}% (${weeklyCount}/7회)`;
+
+                if (isAuthedDate && todayLearning && todayLearning.trim()) {
+                    formattedMessage += `\n\n📚 Today's Learning\n${todayLearning.trim()}`;
+                }
+
+                if (isAuthedDate && todayReflection && todayReflection.trim()) {
+                    formattedMessage += `\n\n💭 Today's Reflection\n${todayReflection.trim()}`;
+                }
+
+                formattedMessage += `\n\n🎉 Daily Study Complete!`;
+
+                // 클립보드 복사 실행
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(formattedMessage).then(() => {
+                        setCopiedSuccess(true);
+                        showToast(isAuthedDate ? '📋 카카오톡 인증 메시지(인증 완료)가 복사되었습니다!' : '📋 카카오톡 메시지(인증 미완료)가 복사되었습니다!');
+                        setTimeout(() => setCopiedSuccess(false), 2000);
+                    }).catch(() => {
+                        fallbackCopyText(formattedMessage, isAuthedDate);
+                    });
+                } else {
+                    fallbackCopyText(formattedMessage, isAuthedDate);
+                }
+            };
+
+            const fallbackCopyText = (text, isAuthedDate) => {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    setCopiedSuccess(true);
+                    showToast(isAuthedDate ? '📋 카카오톡 인증 메시지(인증 완료)가 복사되었습니다!' : '📋 카카오톡 메시지(인증 미완료)가 복사되었습니다!');
+                    setTimeout(() => setCopiedSuccess(false), 2000);
+                } catch (err) {
+                    showToast('❌ 복사에 실패했습니다.');
+                }
+                document.body.removeChild(textArea);
+            };
+
+            // 다크모드 토글
+            const toggleDarkMode = () => {
+                setIsDarkMode(!isDarkMode);
+                document.body.classList.toggle('dark');
+                document.body.classList.toggle('light');
+            };
+
+            // 통계 산출 (completedDates 기준)
+            const uniqueDates = Array.from(new Set(completedDates));
+            const totalAuthDays = uniqueDates.length;
+            const isTodayAuthed = uniqueDates.includes(getTodayString());
+
+            // 캘린더 관련 계산
+            const calYear = currentCalDate.getFullYear();
+            const calMonth = currentCalDate.getMonth(); // 0-indexed
+            const firstDayOfMonth = new Date(calYear, calMonth, 1).getDay(); // 0: Sun
+            const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+
+            const prevMonth = () => {
+                setCurrentCalDate(new Date(calYear, calMonth - 1, 1));
+            };
+            const nextMonth = () => {
+                setCurrentCalDate(new Date(calYear, calMonth + 1, 1));
+            };
+
+            // 년도 / 월 드롭다운 선택 변경 처리
+            const handleYearChange = (e) => {
+                const newYear = parseInt(e.target.value, 10);
+                setCurrentCalDate(new Date(newYear, calMonth, 1));
+            };
+
+            const handleMonthChange = (e) => {
+                const newMonth = parseInt(e.target.value, 10);
+                setCurrentCalDate(new Date(calYear, newMonth, 1));
+            };
+
+            // 주간 인증 횟수 (최근 7일)
+            const todayObj = new Date();
+            const past7Days = Array.from({length: 7}, (_, i) => {
+                const d = new Date();
+                d.setDate(todayObj.getDate() - i);
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            });
+            const weeklyCount = past7Days.filter(dateStr => uniqueDates.includes(dateStr)).length;
+            const achievementRate = Math.round((weeklyCount / 7) * 100);
+
+            // 연속 달성일(Streak) 계산
+            let streak = 0;
+            let checkDate = new Date();
+            while (true) {
+                const yyyy = checkDate.getFullYear();
+                const mm = String(checkDate.getMonth() + 1).padStart(2, '0');
+                const dd = String(checkDate.getDate()).padStart(2, '0');
+                const dStr = `${yyyy}-${mm}-${dd}`;
+                if (uniqueDates.includes(dStr)) {
+                    streak++;
+                    checkDate.setDate(checkDate.getDate() - 1);
+                } else if (streak === 0 && dStr === getTodayString()) {
+                    // 오늘 아직 안 썼으면 어제부터 카운트
+                    checkDate.setDate(checkDate.getDate() - 1);
+                } else {
+                    break;
+                }
+            }
+
+            return (
+                <div className={`min-h-screen pb-16 transition-colors duration-300 ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
+                    
+                    {/* Floating Toast Notification */}
+                    {toastMessage && (
+                        <div className="fixed bottom-6 right-6 z-50 bg-slate-800 text-white font-medium text-sm px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center space-x-2 animate-bounce">
+                            <span>{toastMessage}</span>
+                        </div>
+                    )}
+
+                    {/* Top Navigation Header */}
+                    <header className={`border-b px-6 py-3.5 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md ${isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/90 border-gray-200'}`}>
+                        <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md shadow-indigo-500/20">
+                                📖
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-bold tracking-tight leading-none">Make It Mine</h1>
+                                <p className="text-xs text-gray-400 mt-1 font-medium">Daily English Journal & Kakao Verification</p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center space-x-3">
+                            <span className={`text-xs font-bold px-3 py-1.5 rounded-full border flex items-center gap-1.5 shadow-sm ${isTodayAuthed ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-amber-500/10 text-amber-600 border-amber-500/20'}`}>
+                                {isTodayAuthed ? '✅ 오늘 인증 완료' : '✍️ 오늘 인증 미완료'} |🔥 {streak}일 연속
+                            </span>
+
+                            <button
+                                onClick={toggleDarkMode}
+                                className={`p-2 rounded-xl border text-sm font-semibold transition ${isDarkMode ? 'bg-slate-800 border-slate-700 text-yellow-400 hover:bg-slate-700' : 'bg-gray-100 border-gray-200 text-slate-700 hover:bg-gray-200'}`}
+                                title="테마 변경"
+                            >
+                                {isDarkMode ? '🌙' : '☀️'}
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* Main Container */}
+                    <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-4 sm:mt-6">
+                        
+                        {/* Summary Metrics Bar - 모바일 1줄 2개 (2x2 Grid) */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-4 mb-5 sm:mb-6">
+                            <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl border transition shadow-sm flex flex-col justify-between ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                <div className="card-title font-semibold text-gray-400 whitespace-nowrap truncate">🔥 연속 학습 달성</div>
+                                <div className="card-value font-black mt-0.5 sm:mt-1 text-indigo-500 whitespace-nowrap">{streak}일 연속</div>
+                            </div>
+                            <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl border transition shadow-sm flex flex-col justify-between ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                <div className="card-title font-semibold text-gray-400 whitespace-nowrap truncate">📅 이번 주 인증</div>
+                                <div className="card-value font-black mt-0.5 sm:mt-1 text-emerald-500 whitespace-nowrap">{weeklyCount} <span className="text-xs sm:text-sm font-normal text-gray-400">/ 7회</span></div>
+                            </div>
+                            <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl border transition shadow-sm flex flex-col justify-between ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                <div className="card-title font-semibold text-gray-400 whitespace-nowrap truncate">🎯 주간 달성률</div>
+                                <div className="card-value font-black mt-0.5 sm:mt-1 text-amber-500 whitespace-nowrap">{achievementRate}%</div>
+                            </div>
+                            <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl border transition shadow-sm flex flex-col justify-between ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                <div className="card-title font-semibold text-gray-400 whitespace-nowrap truncate">📚 총 출석/인증일</div>
+                                <div className="card-value font-black mt-0.5 sm:mt-1 text-sky-500 whitespace-nowrap">{totalAuthDays}일 달성</div>
+                            </div>
+                        </div>
+
+                        {/* Calendar Section */}
+                        <div className={`p-4 sm:p-6 rounded-2xl border transition shadow-sm mb-6 ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 sm:mb-4">
+                                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                                    <span className="text-indigo-500 text-lg sm:text-xl">📅</span>
+                                    <h2 className="font-bold text-base sm:text-lg whitespace-nowrap">학습 현황 캘린더</h2>
+                                </div>
+                                <div className="flex items-center space-x-1.5">
+                                    <button 
+                                        onClick={prevMonth}
+                                        className={`p-1 px-2 rounded-lg border text-xs font-bold transition ${isDarkMode ? 'bg-slate-900 border-slate-700 hover:bg-slate-700' : 'bg-gray-100 border-gray-200 hover:bg-gray-200'}`}
+                                        title="이전달"
+                                    >
+                                        ◀
+                                    </button>
+
+                                    {/* 년도 선택 드롭다운 */}
+                                    <select
+                                        value={calYear}
+                                        onChange={handleYearChange}
+                                        className={`p-1 px-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                    >
+                                        {Array.from({ length: 11 }, (_, i) => 2020 + i).map((year) => (
+                                            <option key={year} value={year}>
+                                                {year}년
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    {/* 월 선택 드롭다운 */}
+                                    <select
+                                        value={calMonth}
+                                        onChange={handleMonthChange}
+                                        className={`p-1 px-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                    >
+                                        {Array.from({ length: 12 }, (_, i) => i).map((month) => (
+                                            <option key={month} value={month}>
+                                                {month + 1}월
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    <button 
+                                        onClick={nextMonth}
+                                        className={`p-1 px-2 rounded-lg border text-xs font-bold transition ${isDarkMode ? 'bg-slate-900 border-slate-700 hover:bg-slate-700' : 'bg-gray-100 border-gray-200 hover:bg-gray-200'}`}
+                                        title="다음달"
+                                    >
+                                        ▶
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Calendar Grid */}
+                            <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center">
+                                {['일', '월', '화', '수', '목', '금', '토'].map((day, idx) => (
+                                    <div key={day} className={`text-xs font-bold py-1 ${idx === 0 ? 'text-red-400' : idx === 6 ? 'text-sky-400' : 'text-gray-400'}`}>
+                                        {day}
+                                    </div>
+                                ))}
+
+                                {/* 빈 날짜 칸 */}
+                                {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+                                    <div key={`empty-${i}`} className="h-10 sm:h-14 rounded-lg sm:rounded-xl"></div>
+                                ))}
+
+                                {/* 해당 월 날짜 칸 */}
+                                {Array.from({ length: daysInMonth }).map((_, i) => {
+                                    const dayNum = i + 1;
+                                    const mmStr = String(calMonth + 1).padStart(2, '0');
+                                    const ddStr = String(dayNum).padStart(2, '0');
+                                    const dateStr = `${calYear}-${mmStr}-${ddStr}`;
+                                    const isWritten = completedDates.includes(dateStr);
+                                    const isToday = dateStr === getTodayString();
+                                    const matchingJournal = journals.find(j => j.date === dateStr);
+
+                                    return (
+                                        <div
+                                            key={dateStr}
+                                            onClick={() => {
+                                                if (matchingJournal) {
+                                                    handleLoadJournal(matchingJournal);
+                                                } else {
+                                                    setStudyDate(dateStr);
+                                                    if (isWritten) {
+                                                        showToast(`📅 ${dateStr}에 기록된 일기 원본은 삭제되었지만, 출석 기록은 유지 중입니다.`);
+                                                    } else {
+                                                        showToast(`📅 ${dateStr} 날짜가 선택되었습니다.`);
+                                                    }
+                                                }
+                                            }}
+                                            className={`h-10 sm:h-14 rounded-lg sm:rounded-xl border p-1 flex flex-col justify-between items-center cursor-pointer transition relative group ${
+                                                isWritten
+                                                    ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm font-bold hover:scale-105'
+                                                    : isDarkMode
+                                                        ? 'bg-slate-900/60 border-slate-700/80 text-gray-300 hover:border-indigo-500'
+                                                        : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-indigo-400'
+                                            } ${isToday && !isWritten ? 'ring-2 ring-indigo-500' : ''}`}
+                                        >
+                                            <span className="cal-day-text font-bold leading-none">
+                                                {dayNum}
+                                            </span>
+                                            {isWritten ? (
+                                                <span className="cal-status-tag bg-emerald-700/70 px-1 py-0.5 rounded-md text-white font-medium whitespace-nowrap leading-none">
+                                                    완료
+                                                </span>
+                                            ) : (
+                                                <span className="cal-status-tag text-gray-400 font-normal leading-none">
+                                                    {isToday ? '오늘' : ''}
+                                                </span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+                            {/* LEFT COLUMN: 영어 일기 작성 폼 */}
+                            <div className="lg:col-span-6 space-y-5">
+                                <div className={`rounded-2xl p-4 sm:p-6 border transition shadow-sm ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                    
+                                    {/* Section Title & Header */}
+                                    <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-gray-200/40">
+                                        <div className="flex items-center space-x-2">
+                                            <span className="text-indigo-500 text-lg sm:text-xl">📝</span>
+                                            <h2 className="font-bold text-base sm:text-lg">
+                                                {editingId ? '영어 일기 수정하기' : '오늘의 영어 일기 작성'}
+                                            </h2>
+                                        </div>
+                                        {editingId && (
+                                            <button 
+                                                onClick={handleResetForm}
+                                                className="text-xs bg-gray-500/10 text-gray-400 hover:text-gray-200 font-semibold px-2 py-1 rounded-lg border border-gray-500/20 whitespace-nowrap"
+                                            >
+                                                ✕ 취소 (새 일기)
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Form Fields */}
+                                    <form onSubmit={handleSaveJournal} className="mt-4 sm:mt-5 space-y-3.5 sm:space-y-4">
+                                        
+                                        {/* 1. 참여자 이름 & 2. 학습 날짜 */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block mb-1">
+                                                    👤 참여자 이름 <span className="text-red-400">*</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={participantName}
+                                                    onChange={(e) => setParticipantName(e.target.value)}
+                                                    placeholder="이름 입력 (예: 김영어)"
+                                                    className={`w-full p-2.5 sm:p-3 border rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                                    required
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block mb-1">
+                                                    📅 학습 날짜 <span className="text-red-400">*</span>
+                                                </label>
+                                                <input
+                                                    type="date"
+                                                    value={studyDate}
+                                                    onChange={(e) => setStudyDate(e.target.value)}
+                                                    className={`w-full p-2.5 sm:p-3 border rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* 3. 오늘 배운 문법 또는 표현 (선택) */}
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block mb-1">
+                                                📚 오늘 배운 문법 또는 표현 <span className="text-xs text-gray-400 font-normal">(선택)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={todayLearning}
+                                                onChange={(e) => setTodayLearning(e.target.value)}
+                                                placeholder="예: Whip up (뚝딱 만들다), In a rush (서둘러서)"
+                                                className={`w-full p-2.5 sm:p-3 border rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                            />
+                                        </div>
+
+                                        {/* 샘플 주입 템플릿 버튼 */}
+                                        <div>
+                                            <span className="text-xs font-semibold text-gray-400 block mb-1">예시 일기 불러오기:</span>
+                                            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                                                {SAMPLE_JOURNALS.map((sample, idx) => (
+                                                    <button
+                                                        key={idx}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setTodayJournal(sample.text);
+                                                            showToast(`'${sample.title}' 예시 문장이 입력되었습니다.`);
+                                                        }}
+                                                        className={`text-xs px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border font-medium transition whitespace-nowrap ${isDarkMode ? 'bg-slate-900/60 border-slate-700 hover:border-indigo-500 text-gray-300' : 'bg-gray-100 border-gray-200 hover:bg-indigo-50 hover:border-indigo-300 text-gray-700'}`}
+                                                    >
+                                                        {sample.title}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* 4. Today's Journal (대형 메모 박스) */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block">
+                                                    ✍️ Today's Journal <span className="text-red-400">*</span>
+                                                </label>
+                                                <span className="text-xs text-gray-400 font-mono">{todayJournal.length}자</span>
+                                            </div>
+                                            <textarea
+                                                value={todayJournal}
+                                                onChange={(e) => setTodayJournal(e.target.value)}
+                                                placeholder="Write about what you learned or how you used English today..."
+                                                rows="8"
+                                                className={`w-full p-3 sm:p-4 border rounded-xl text-sm leading-relaxed resize-y focus:ring-2 focus:ring-indigo-500 transition font-normal ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100 placeholder-slate-500' : 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'}`}
+                                            />
+                                        </div>
+
+                                        {/* 5. 오늘의 짧은 회고 (선택) */}
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block mb-1">
+                                                💭 오늘의 짧은 회고 <span className="text-xs text-gray-400 font-normal">(선택)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={todayReflection}
+                                                onChange={(e) => setTodayReflection(e.target.value)}
+                                                placeholder="예: 오늘 일기 쓰기 완료! 내일도 꾸준히 써보자."
+                                                className={`w-full p-2.5 sm:p-3 border rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-300 text-gray-800'}`}
+                                            />
+                                        </div>
+
+                                        {/* 버튼 그룹: 저장 및 카톡 복사 */}
+                                        <div className="pt-2">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+                                                {/* 일기 저장 및 인증 완료 버튼 */}
+                                                <button
+                                                    type="submit"
+                                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-3.5 rounded-xl transition shadow-md shadow-indigo-500/20 flex items-center justify-center space-x-1.5 text-xs sm:text-sm whitespace-nowrap"
+                                                >
+                                                    <span>💾 {editingId ? '일기 수정 완료' : '일기 저장 및 인증 완료'}</span>
+                                                </button>
+
+                                                {/* 카카오톡 인증 메시지 복사 버튼 */}
+                                                <button
+                                                    type="button"
+                                                    onClick={handleCopyKakaoAuthMessage}
+                                                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-3.5 rounded-xl transition shadow-md shadow-amber-500/20 flex items-center justify-center space-x-1.5 text-xs sm:text-sm whitespace-nowrap"
+                                                >
+                                                    <span>{copiedSuccess ? '✅ 복사 완료!' : '💬 카카오톡 인증 복사'}</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                    </form>
+
+                                </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: 작성된 일기 기록 목록 */}
+                            <div className="lg:col-span-6 space-y-5">
+                                <div className={`rounded-2xl p-4 sm:p-6 border transition shadow-sm ${isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-gray-200/80'}`}>
+                                    <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-gray-200/40">
+                                        <div className="flex items-center space-x-2">
+                                            <span className="text-indigo-500 text-lg sm:text-xl">📚</span>
+                                            <h2 className="font-bold text-base sm:text-lg">나의 일기 기록 목록</h2>
+                                        </div>
+                                        <span className="text-xs bg-indigo-500/10 text-indigo-500 font-bold px-2.5 py-1 rounded-full border border-indigo-500/20">
+                                            총 {journals.length}개 저장됨
+                                        </span>
+                                    </div>
+
+                                    {/* 일기 카드 리스트 */}
+                                    <div className="mt-4 space-y-3.5 max-h-[620px] overflow-y-auto pr-1">
+                                        {journals.length === 0 ? (
+                                            <div className="text-center py-12 text-gray-400">
+                                                <p className="text-3xl mb-2">✍️</p>
+                                                <p className="text-sm font-medium">아직 작성된 일기가 없습니다.</p>
+                                                <p className="text-xs text-gray-500 mt-1">첫 번째 영어 일기를 작성해보세요!</p>
+                                            </div>
+                                        ) : (
+                                            journals.map((item) => (
+                                                <div 
+                                                    key={item.id}
+                                                    className={`p-4 rounded-xl border transition hover:shadow-md ${
+                                                        editingId === item.id 
+                                                            ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-500/5' 
+                                                            : isDarkMode 
+                                                                ? 'bg-slate-900/60 border-slate-700/80' 
+                                                                : 'bg-gray-50/80 border-gray-200'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <div className="flex items-center space-x-2">
+                                                            <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                                                                {item.date}
+                                                            </span>
+                                                            <span className="text-xs font-semibold text-gray-400">
+                                                                👤 {item.name}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center space-x-1.5">
+                                                            <button
+                                                                onClick={() => handleLoadJournal(item)}
+                                                                className="text-xs px-2 py-1 bg-gray-500/10 hover:bg-gray-500/20 text-gray-400 hover:text-indigo-400 font-medium rounded-md transition"
+                                                            >
+                                                                ✏️ 수정/불러오기
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteJournal(item.id)}
+                                                                className="text-xs px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium rounded-md transition"
+                                                                title="삭제"
+                                                            >
+                                                                🗑️
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {item.learning && (
+                                                        <div className="text-xs mb-2 text-indigo-400 font-medium bg-indigo-500/5 p-2 rounded-lg border border-indigo-500/10">
+                                                            📚 <span className="font-bold">Today's Learning:</span> {item.learning}
+                                                        </div>
+                                                    )}
+
+                                                    <div className="text-sm font-normal whitespace-pre-wrap leading-relaxed my-2 text-slate-700 dark:text-slate-200">
+                                                        {item.journal}
+                                                    </div>
+
+                                                    {item.reflection && (
+                                                        <div className="text-xs mt-2 text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
+                                                            💭 <span className="font-bold">Reflection:</span> {item.reflection}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
